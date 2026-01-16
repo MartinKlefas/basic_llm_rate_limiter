@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -35,10 +36,14 @@ class SlidingWindowRateLimiter:
         window_seconds: float = 60.0,
         model_for_tokenizer: str = "gpt-4o-mini",
         fallback_chars_per_token: float = 4.0,
+        verbose: bool = False,
+        logger: Optional[logging.Logger] = None,
     ):
         self.max_requests = int(max_requests)
         self.max_tokens = int(max_tokens)
         self.window = float(window_seconds)
+        self._verbose = bool(verbose)
+        self._logger = logger or logging.getLogger(__name__)
 
         self._lock = asyncio.Lock()
         self._state = LimiterState(
@@ -130,6 +135,21 @@ class SlidingWindowRateLimiter:
                     return tokens_needed
 
                 sleep_for = self._next_wait_time(now, tokens_needed)
+                if self._verbose and sleep_for > 0:
+                    if not can_rpm:
+                        self._logger.info(
+                            "%s requests sent in the last %.0f seconds, waiting %.2f seconds prior to submitting the next query.",
+                            len(self._state.req_expiries),
+                            self.window,
+                            sleep_for,
+                        )
+                    if not can_tpm:
+                        self._logger.info(
+                            "%s tokens sent in the last %.0f seconds, waiting %.2f seconds prior to submitting the next query.",
+                            self._state.tok_sum,
+                            self.window,
+                            sleep_for,
+                        )
 
             # IMPORTANT: sleep outside the lock
             await asyncio.sleep(max(0.01, sleep_for))
